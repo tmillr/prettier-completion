@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# NOTE: prettier allows opts after args (except after `--`)
+# TODO: handle redirection and/or use bash-completion pkg
+# shellcheck enable=all
+# shellcheck disable=SC2250
+
+_prettier() {
+    command -v prettier >/dev/null 2>&1 || return
+
+    # shellcheck disable=SC2064
+    trap "trap RETURN
+        unset -v LC_ALL
+        ${LC_ALL+"$(declare -p LC_ALL)"}
+        $(shopt -po)
+        $(shopt -p)
+    " RETURN
+
+    set -fu
+    local IFS
+    IFS=$' \t\n'
+    export LC_ALL=C
+    COMPREPLY=()
+
+    local out
+    out="$(
+        command prettier --help \
+            | command sed -n -E \
+                -e '/^[[:space:]]*[Uu][Ss][Aa][Gg][Ee]/,/^[[:space:]]*$/b' \
+                -e 's/^(([[:space:]]*,?-[^[:space:]]+)+[[:space:]]*(<[^>]+>)?).*/\1/p'
+    )"
+
+    local prevword="$3"
+    local currword="$2"
+    local ifs1=$' \t\n,'
+    local ifs2=$' \t\n|>'
+    local -a allowed_args
+    allowed_args=('[file/dir/glob ...]')
+
+    local -a opts optarr optargarr optargs
+    local ln=
+    opts=()
+    optarr=()
+    optargarr=()
+    optargs=()
+
+    while read -r ln; do
+        IFS="$ifs1"
+        optarr=(${ln%%'<'*})
+        IFS="$ifs2"
+        ln="${ln#*'<'}"
+        optargarr=(${ln%'>'*})
+        IFS=$' \t\n'
+        local opt=
+
+        for opt in "${optarr[@]}"; do
+            opts+=("$opt")
+
+            if [ "X$prevword" = "X$opt" ]; then
+                optargs=("${optargarr[@]}")
+            fi
+        done
+    done <<<"$out"
+
+    # Short-circuit if cmdline contains '--' before cursor word
+    local i=0
+
+    while [ "$i" -lt "$COMP_CWORD" ]; do
+        case "${COMP_WORDS[i]}" in
+            --)
+                return 0
+                ;;
+        esac
+
+        ((i++))
+    done
+
+    # Check if expecting optarg
+    case "${optargs[*]}" in
+        [Pp][Aa][Tt][Hh]) : ;;
+
+        [Ff][Ll][Aa][Gg])
+            local -a flags
+            flags=()
+
+            for opt in "${opts[@]}"; do
+                opt="${opt#-}"
+                flags+=("${opt#-}")
+            done
+
+            COMPREPLY+=($(builtin compgen -W '"${flags[@]}"' -- "$currword"))
+            unset -v flags
+            ;;
+
+        *[![:space:]]*)
+            COMPREPLY+=($(builtin compgen -W '"${optargs[@]}"' -- "$currword"))
+            ;;
+
+        # No possible optargs for the previous word
+        *)
+            COMPREPLY+=($(builtin compgen -W '"${opts[@]}"' -- "$currword"))
+            [ -z "$currword" ] && COMPREPLY+=("${allowed_args[@]}")
+            ;;
+    esac
+}
+
+builtin complete -o bashdefault -o default -F _prettier prettier
